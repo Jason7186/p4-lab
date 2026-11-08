@@ -52,6 +52,20 @@ In C1 the same loop was still running at around 1,000 packets per second.
         check_paths()): what can each catch that the other can't? Why do real networks use both?
      d) What would this change cost on a hardware switch running at line rate? -->
 
+a) Prediction: I expect s2 to still send the packet to h2, because my new byte comes after `dst_id`, so the old program reads `dst_id` correctly. But s2 only knows a 4-byte tunnel header, so it will treat my `hop_limit` byte as the start of the IPv4 header, and read IPv4 one byte off. When it then recalculates the IPv4 checksum, it may overwrite the real protocol byte, so h2's `receive.py` might not show the packet even though it arrives. The loop should still end, but take about twice as long (around 17 passes instead of 9), because only s1 decreases the hop limit.
+
+What happened: As predicted. s2 read `dst_id` correctly and sent the packet to h2, but `receive.py` on h2 showed nothing. The tcpdump capture shows why, the packet arrived with `hop_limit` 07 (s1 decreased it, s2 didn't), but the IPv4 protocol byte was `0d` instead of `11` (UDP). s2 had read IPv4 one byte off, so its checksum update overwrote the real protocol byte. h2 no longer saw a UDP packet. The loop still ended, but after 17 passes (s1+9, s2 +8) instead of 9, because only s1 counted hops. So a half-upgraded network still forwards, but silently corrupts packets and weakens the loop protection.
+
+b) A safer option is to give the new header its own EtherType. An old switch doesn't recognise it, stops parsing, and drops the packet. That fails safely instead of corrupting it. The rollout then goes in two steps.First, upgrade every switch to understand both the old and the new EtherType, and only then let the senders start using the new one. Until every switch is upgraded, all traffic still uses the old header, so nothing breaks. Another option is to append the new field. Old switches still read `proto_id` and `dst_id`, so they keep forwarding.
+
+c) Data plane: the hop limit works on every packet, whatever caused the loop. That includes a manual change like `table_modify` in C1, which the controller never saw, a switch bug, or a short-lived loop while rules are being updated.`check_paths()` only knows about the rules it installed itself.
+
+Control plane: `check_paths()` checks the rules before they are installed, so it can stop a loop before any packet is sent.
+
+Both: The control plane prevents most mistakes in advance, and the hop limit is a safety net for the ones it misses.
+
+d) The cost is small. Each tunnelled packet carries one extra byte, so it uses slightly more bandwidth.
+
 ## AI use
 
 Level 3
