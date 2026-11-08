@@ -24,16 +24,21 @@ No. `ipv4_forward` decrements `ttl`, but nothing checks it or drops the packet a
 
 ## 3. Implementation
 
-<!-- Summarise what you changed in tunnel.p4, send.py and receive.py. The pull request shows
-     the code itself: here, explain anything a reviewer might not see from the diff alone. -->
+- `tunnel.p4`: added a `bit<8> hop_limit` field at the end of the tunnel header. If a tunnelled packet arrives with `hop_limit` 0, it is dropped. Otherwise `hop_limit` is
+  reduced by 1 and the packet is forwarded.
+- `send.py`: added the same field, and a `--hops` option to set the starting value (default 8).
+- `receive.py`: added the same field, and prints the `hop_limit` that arrives.
+- The parser and deparser didn't need new code. They now read and write 5 bytes of tunnel header instead of 4.
 
 ## 4. Evidence: it works
 
-<!-- Show, with your evidence files:
-     - tunnelled delivery to h2 and h3, and the hop limit the receivers saw (delivery.txt);
-     - plain IPv4 still works (delivery.txt);
-     - the same loop as in section 1 now ends, and after how many passes — does that match
-       your design? (loop-after.txt) -->
+Delivery (`evidence/delivery.txt`): tunnelled packets sent to exit 2 and exit 3 arrived at h2 and h3 with `hop_limit=6`. They started at 8 and crossed 2 switches. `ping h3` still works, so IPv4 is unaffected.
+
+The loop now end (`evidence/loop-after.txt`): I made the same loop as in C1. Before sending, both counts were 0. After one packet, s1 had handled 5 packets and s2 had handled 4. Five seconds later the counts were still 5 and 4, so the loop had stopped.
+
+That is 9 passes, which matches my design. s1 saw the packet with `hop_limit` 8, 6,
+4, 2 and 0, and s2 saw it with 7, 5, 3 and 1. s1 dropped it when it arrived with 0.
+In C1 the same loop was still running at around 1,000 packets per second.
 
 ## 5. Evaluation
 
